@@ -6,43 +6,102 @@ import Sidebar from "../src/components/Sidebar";
 import { supabase } from "@/lib/supabase";
 import { Bot, Send, User } from "lucide-react";
 
-const messages = [
-  {
-    sender: "ai",
-    text: "Hello 👋 Welcome to BizLink AI. How can I help your business today?",
-  },
-  {
-    sender: "user",
-    text: "I need help responding to customer questions faster.",
-  },
-  {
-    sender: "ai",
-    text: "Great! I can assist with automating replies and training your AI assistant.",
-  },
-  {
-    sender: "human",
-    text: "Hi 👋 A human agent has joined the conversation.",
-  },
-];
+/* ---------------- AI ENGINE (OUTSIDE COMPONENT) ---------------- */
+function generateAIResponse(message: string) {
+  const msg = message.toLowerCase();
 
+  if (msg.includes("price")) {
+    return "Our pricing depends on the service. Would you like a detailed quote?";
+  }
+
+  if (msg.includes("hello") || msg.includes("hi")) {
+    return "Hello 👋 How can I assist your business today?";
+  }
+
+  if (msg.includes("delivery")) {
+    return "Delivery usually takes 2–5 business days depending on your location.";
+  }
+
+  if (msg.includes("job")) {
+    return "You can check available jobs in the Jobs section of the platform.";
+  }
+
+  return "Thanks for your message. Our team will get back to you shortly.";
+}
+
+/* ---------------- MAIN COMPONENT ---------------- */
 export default function ChatPage() {
   const router = useRouter();
+
+  const [messages, setMessages] = useState<any[]>([]);
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
 
+  /* ---------------- AUTH CHECK ---------------- */
   useEffect(() => {
     const checkUser = async () => {
       const { data } = await supabase.auth.getSession();
 
       if (!data.session) {
         router.push("/login");
-      } else {
-        setLoading(false);
+        return;
       }
+
+      setLoading(false);
+      fetchMessages();
     };
 
     checkUser();
   }, [router]);
 
+  /* ---------------- LOAD MESSAGES ---------------- */
+  async function fetchMessages() {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (!error) {
+      setMessages(data || []);
+    }
+  }
+
+  /* ---------------- SEND MESSAGE + AI ---------------- */
+  async function sendMessage() {
+    if (!input.trim()) return;
+
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData?.user?.id;
+
+    const userMessage = input;
+
+    // 1. Save USER message
+    await supabase.from("messages").insert({
+      text: userMessage,
+      sender: "user",
+      user_id: userId,
+    });
+
+    setInput("");
+
+    // refresh chat
+    await fetchMessages();
+
+    // 2. AI RESPONSE (simulated delay)
+    setTimeout(async () => {
+      const aiReply = generateAIResponse(userMessage);
+
+      await supabase.from("messages").insert({
+        text: aiReply,
+        sender: "ai",
+        user_id: userId,
+      });
+
+      fetchMessages();
+    }, 800);
+  }
+
+  /* ---------------- LOADING SCREEN ---------------- */
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-black text-yellow-500">
@@ -51,16 +110,17 @@ export default function ChatPage() {
     );
   }
 
+  /* ---------------- UI ---------------- */
   return (
     <main className="flex min-h-screen bg-black text-white">
 
       {/* Sidebar */}
       <Sidebar />
 
-      {/* Main Layout */}
+      {/* Chat Layout */}
       <div className="flex w-full md:ml-24">
 
-        {/* Conversations */}
+        {/* LEFT PANEL */}
         <aside className="hidden w-80 border-r border-yellow-500/10 bg-zinc-950 md:block">
 
           <div className="p-6">
@@ -71,98 +131,102 @@ export default function ChatPage() {
 
           <div className="space-y-2 px-4">
 
-            <div className="rounded-2xl bg-yellow-500/10 p-4 transition hover:bg-yellow-500/20">
+            <div className="rounded-2xl bg-yellow-500/10 p-4">
               <h3 className="font-semibold">Kigali Fashion Hub</h3>
               <p className="text-sm text-gray-400">AI assistant active</p>
-            </div>
-
-            <div className="rounded-2xl p-4 transition hover:bg-zinc-900">
-              <h3 className="font-semibold">Smart Electronics</h3>
-              <p className="text-sm text-gray-400">Human support joined</p>
             </div>
 
           </div>
         </aside>
 
-        {/* Chat Area */}
+        {/* CHAT AREA */}
         <section className="flex flex-1 flex-col">
 
-          {/* Header */}
+          {/* HEADER */}
           <div className="flex items-center justify-between border-b border-yellow-500/10 p-5">
 
             <div>
-              <h2 className="text-xl font-bold">Kigali Fashion Hub</h2>
-              <p className="text-sm text-yellow-500">AI Assistant Active</p>
+              <h2 className="text-xl font-bold">
+                BizLink AI Chat
+              </h2>
+              <p className="text-sm text-yellow-500">
+                AI + Human Business Assistant
+              </p>
             </div>
 
             <div className="rounded-full border border-yellow-500/20 px-4 py-2 text-sm text-yellow-500">
-              Business Chat
+              Live Chat
             </div>
+
           </div>
 
-          {/* Messages */}
-          <div className="flex-1 space-y-6 overflow-y-auto p-6">
+          {/* MESSAGES */}
+          <div className="flex-1 space-y-5 overflow-y-auto p-6">
 
-            {messages.map((message, index) => (
+            {messages.map((msg) => (
               <div
-                key={index}
+                key={msg.id}
                 className={`flex ${
-                  message.sender === "user"
+                  msg.sender === "user"
                     ? "justify-end"
                     : "justify-start"
                 }`}
               >
+
                 <div
                   className={`max-w-md rounded-3xl px-5 py-4 ${
-                    message.sender === "user"
+                    msg.sender === "user"
                       ? "bg-yellow-500 text-black"
-                      : message.sender === "human"
-                      ? "bg-blue-600"
                       : "bg-zinc-900 border border-yellow-500/10"
                   }`}
                 >
 
+                  {/* LABEL */}
                   <div className="mb-2 flex items-center gap-2 text-sm">
 
-                    {message.sender === "ai" && (
+                    {msg.sender === "user" ? (
+                      <>
+                        <User size={16} />
+                        <span>You</span>
+                      </>
+                    ) : (
                       <>
                         <Bot size={16} />
                         <span>AI Assistant</span>
                       </>
                     )}
 
-                    {message.sender === "human" && (
-                      <>
-                        <User size={16} />
-                        <span>Business Staff</span>
-                      </>
-                    )}
-
                   </div>
 
-                  <p>{message.text}</p>
+                  <p>{msg.text}</p>
                 </div>
               </div>
             ))}
 
           </div>
 
-          {/* Input */}
+          {/* INPUT */}
           <div className="border-t border-yellow-500/10 p-4">
 
             <div className="flex items-center gap-4 rounded-2xl border border-yellow-500/10 bg-zinc-900 p-3">
 
               <input
-                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
                 placeholder="Type your message..."
                 className="flex-1 bg-transparent outline-none"
               />
 
-              <button className="rounded-xl bg-yellow-500 p-3 text-black transition hover:scale-105">
+              <button
+                onClick={sendMessage}
+                className="rounded-xl bg-yellow-500 p-3 text-black transition hover:scale-105"
+              >
                 <Send size={18} />
               </button>
 
             </div>
+
           </div>
 
         </section>
