@@ -4,32 +4,9 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "../src/components/Sidebar";
 import { supabase } from "@/lib/supabase";
+import { generateAIResponse } from "../ai/memoryAI";
 import { Bot, Send, User } from "lucide-react";
 
-/* ---------------- AI ENGINE (OUTSIDE COMPONENT) ---------------- */
-function generateAIResponse(message: string) {
-  const msg = message.toLowerCase();
-
-  if (msg.includes("price")) {
-    return "Our pricing depends on the service. Would you like a detailed quote?";
-  }
-
-  if (msg.includes("hello") || msg.includes("hi")) {
-    return "Hello 👋 How can I assist your business today?";
-  }
-
-  if (msg.includes("delivery")) {
-    return "Delivery usually takes 2–5 business days depending on your location.";
-  }
-
-  if (msg.includes("job")) {
-    return "You can check available jobs in the Jobs section of the platform.";
-  }
-
-  return "Thanks for your message. Our team will get back to you shortly.";
-}
-
-/* ---------------- MAIN COMPONENT ---------------- */
 export default function ChatPage() {
   const router = useRouter();
 
@@ -38,66 +15,91 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
 
   /* ---------------- AUTH CHECK ---------------- */
-  useEffect(() => {
-    const checkUser = async () => {
-      const { data } = await supabase.auth.getSession();
+  async function checkUser() {
+    const { data } = await supabase.auth.getSession();
 
-      if (!data.session) {
-        router.push("/login");
-        return;
-      }
+    if (!data.session) {
+      router.push("/login");
+      return;
+    }
 
-      setLoading(false);
-      fetchMessages();
-    };
+    setLoading(false);
+    fetchMessages();
+  }
 
-    checkUser();
-  }, [router]);
-
-  /* ---------------- LOAD MESSAGES ---------------- */
+  /* ---------------- LOAD OLD MESSAGES ---------------- */
   async function fetchMessages() {
     const { data, error } = await supabase
       .from("messages")
       .select("*")
       .order("created_at", { ascending: true });
 
-    if (!error) {
-      setMessages(data || []);
+    if (!error && data) {
+      setMessages(data);
     }
   }
 
-  /* ---------------- SEND MESSAGE + AI ---------------- */
+  /* ---------------- REALTIME CHAT ---------------- */
+  useEffect(() => {
+    checkUser();
+
+    // realtime listener
+    const channel = supabase
+      .channel("realtime-messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "messages",
+        },
+        (payload) => {
+          setMessages((prev) => {
+            // avoid duplicates
+            const exists = prev.find(
+              (msg) => msg.id === payload.new.id
+            );
+
+            if (exists) return prev;
+
+            return [...prev, payload.new];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  /* ---------------- SEND MESSAGE ---------------- */
   async function sendMessage() {
     if (!input.trim()) return;
 
     const { data: userData } = await supabase.auth.getUser();
-    const userId = userData?.user?.id;
 
+    const userId = userData?.user?.id;
     const userMessage = input;
 
-    // 1. Save USER message
+    setInput("");
+
+    // save USER message
     await supabase.from("messages").insert({
       text: userMessage,
       sender: "user",
       user_id: userId,
     });
 
-    setInput("");
-
-    // refresh chat
-    await fetchMessages();
-
-    // 2. AI RESPONSE (simulated delay)
+    // AI response delay
     setTimeout(async () => {
-      const aiReply = generateAIResponse(userMessage);
+      const aiReply = await generateAIResponse(userMessage);
 
       await supabase.from("messages").insert({
         text: aiReply,
         sender: "ai",
         user_id: userId,
       });
-
-      fetchMessages();
     }, 800);
   }
 
@@ -117,10 +119,10 @@ export default function ChatPage() {
       {/* Sidebar */}
       <Sidebar />
 
-      {/* Chat Layout */}
+      {/* MAIN CHAT AREA */}
       <div className="flex w-full md:ml-24">
 
-        {/* LEFT PANEL */}
+        {/* LEFT CHAT LIST */}
         <aside className="hidden w-80 border-r border-yellow-500/10 bg-zinc-950 md:block">
 
           <div className="p-6">
@@ -132,14 +134,19 @@ export default function ChatPage() {
           <div className="space-y-2 px-4">
 
             <div className="rounded-2xl bg-yellow-500/10 p-4">
-              <h3 className="font-semibold">Kigali Fashion Hub</h3>
-              <p className="text-sm text-gray-400">AI assistant active</p>
+              <h3 className="font-semibold">
+                Kigali Fashion Hub
+              </h3>
+
+              <p className="text-sm text-gray-400">
+                AI assistant active
+              </p>
             </div>
 
           </div>
         </aside>
 
-        {/* CHAT AREA */}
+        {/* CHAT SECTION */}
         <section className="flex flex-1 flex-col">
 
           {/* HEADER */}
@@ -149,13 +156,14 @@ export default function ChatPage() {
               <h2 className="text-xl font-bold">
                 BizLink AI Chat
               </h2>
+
               <p className="text-sm text-yellow-500">
-                AI + Human Business Assistant
+                Real-time AI business assistant
               </p>
             </div>
 
             <div className="rounded-full border border-yellow-500/20 px-4 py-2 text-sm text-yellow-500">
-              Live Chat
+              Live
             </div>
 
           </div>
@@ -177,7 +185,7 @@ export default function ChatPage() {
                   className={`max-w-md rounded-3xl px-5 py-4 ${
                     msg.sender === "user"
                       ? "bg-yellow-500 text-black"
-                      : "bg-zinc-900 border border-yellow-500/10"
+                      : "border border-yellow-500/10 bg-zinc-900"
                   }`}
                 >
 
@@ -199,7 +207,9 @@ export default function ChatPage() {
                   </div>
 
                   <p>{msg.text}</p>
+
                 </div>
+
               </div>
             ))}
 
@@ -211,9 +221,14 @@ export default function ChatPage() {
             <div className="flex items-center gap-4 rounded-2xl border border-yellow-500/10 bg-zinc-900 p-3">
 
               <input
+                type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && sendMessage()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    sendMessage();
+                  }
+                }}
                 placeholder="Type your message..."
                 className="flex-1 bg-transparent outline-none"
               />
@@ -230,6 +245,7 @@ export default function ChatPage() {
           </div>
 
         </section>
+
       </div>
     </main>
   );
